@@ -8,7 +8,7 @@
 
 ##---- Mapping table ----
 ## PCHC code
-pchc.universe <- read.xlsx("02_Inputs/Universe_PCHCCode_20201201.xlsx", sheet = "PCHC")
+pchc.universe <- read.xlsx("02_Inputs/Universe_PCHCCode_20201208.xlsx", sheet = "PCHC")
 
 pchc.mapping1 <- pchc.universe %>% 
   filter(!is.na(`单位名称`), !is.na(PCHC_Code)) %>% 
@@ -118,13 +118,25 @@ raw.data <- bind_rows(raw.list) %>%
          packid, units, sales)
 
 ## Guangzhou
-raw.gz1 <- read.csv('02_Inputs/data/广州/gzs 20q1_date.csv')
-raw.gz2 <- read.xlsx('02_Inputs/data/广州/2jd_date.xlsx')
+raw.gz1 <- read_feather('02_Inputs/data/广州/Servier_guangzhou_171819_packid_moleinfo.feather') %>% 
+  distinct(year = as.character(Year), 
+           quarter = Quarter, 
+           date = as.character(Month), 
+           province = '广东', 
+           city = '广州', 
+           hospital = Hospital_Name, 
+           packid = stri_pad_left(packcode, 7, 0), 
+           price = Price, 
+           units = if_else(is.na(Volume), Value / Price, Volume), 
+           sales = Value)
 
-raw.gz <- raw.gz1 %>% 
+raw.gz2 <- read.csv('02_Inputs/data/广州/gzs 20q1_date.csv')
+raw.gz3 <- read.xlsx('02_Inputs/data/广州/2jd_date.xlsx')
+
+raw.gz <- raw.gz2 %>% 
   select(-period) %>% 
   mutate(date = as.character(date)) %>% 
-  bind_rows(raw.gz2) %>% 
+  bind_rows(raw.gz3) %>% 
   mutate(quarter_m = stri_sub(date, 5, 6)) %>% 
   distinct(year = stri_sub(date, 1, 4), 
            quarter = ifelse(quarter_m %in% c("01", "02", "03"), 
@@ -144,6 +156,7 @@ raw.gz <- raw.gz1 %>%
            price = value / unit, 
            units = unit, 
            sales = value) %>% 
+  bind_rows(raw.gz1) %>% 
   left_join(pchc.mapping3, by = c('province', 'city', 'hospital')) %>% 
   filter(!is.na(pchc), !is.na(packid), 
          year %in% c('2018', '2019', '2020'), !(quarter %in% c('2020Q4'))) %>% 
@@ -159,102 +172,25 @@ raw.gz <- raw.gz1 %>%
          nfc = NFC123_Code, molecule = Molecule_Desc, product = Prd_desc, 
          packid, units, sales)
 
-## Shanghai
-
-# Guangzhou
-
-
-# servier
-raw.ah1 <- read_xlsx('02_Inputs/data/Servier_ah_CHC_202006.xlsx')
-raw.bj1 <- read_xlsx('02_Inputs/data/Servier_bj_CHC_2020Q2.xlsx')
-raw.js1 <- read_xlsx('02_Inputs/data/Servier_js_CHC_2020Q1Q2.xlsx')
-raw.zj1 <- read_xlsx('02_Inputs/data/Servier_zj_CHC_2020Q1Q2.xlsx')
-raw.fjsd1 <- read_xlsx('02_Inputs/data/Servier_fjsd_CHC_2020Q1Q2(predicted by all_raw_data_packid_Servier_171819_CHC_m_v4).xlsx')
-
-raw.servier <- bind_rows(raw.ah1, raw.bj1, raw.js1, raw.zj1) %>% 
-  mutate(Year = as.character(Year), 
-         Month = as.character(Month)) %>% 
-  bind_rows(raw.fjsd1) %>% 
-  distinct(year = as.character(Year), 
-           quarter = Quarter, 
-           month = as.character(Month), 
-           province = gsub('省|市', '', Province), 
-           city = if_else(City == "市辖区", "北京", gsub("市", "", City)), 
-           district = County, 
-           hospital = Hospital_Name, 
-           atc4 = ATC4_Code, 
-           nfc = NFC123_Code, 
-           molecule = Molecule_Desc, 
-           product = Prd_desc, 
-           packid = stri_pad_left(packcode, 7, 0), 
-           price = Price, 
-           units = if_else(is.na(Volume), Value / Price, Volume), 
-           sales = Value) %>% 
-  left_join(pchc.mapping3, by = c('province', 'city', 'district', 'hospital')) %>% 
-  filter(!is.na(pchc), pchc != '#N/A', units > 0, sales > 0) %>% 
-  bind_rows(raw.gz) %>% 
-  filter(stri_sub(atc4, 1, 4) %in% c('A10S')) %>% 
-  group_by(year, quarter, month, pchc, atc4, nfc, molecule, product, packid) %>% 
-  summarise(province = first(na.omit(province)), 
-            city = first(na.omit(city)), 
-            district = first(na.omit(district)), 
-            units = sum(units, na.rm = TRUE), 
+## total
+raw.total <- bind_rows(raw.data, raw.gz) %>% 
+  filter(packid %in% market.def$Pack_ID) %>% 
+  group_by(pchc) %>% 
+  mutate(province = first(na.omit(province)), 
+         city = first(na.omit(city)), 
+         district = first(na.omit(district))) %>% 
+  ungroup() %>% 
+  group_by(packid) %>% 
+  mutate(atc4 = first(na.omit(atc4)), 
+         nfc = first(na.omit(nfc)), 
+         molecule = first(na.omit(molecule)), 
+         product = first(na.omit(product))) %>% 
+  ungroup() %>% 
+  group_by(year, date, quarter, province, city, district, pchc, atc4, nfc, 
+           molecule, product, packid) %>% 
+  summarise(units = sum(units, na.rm = TRUE), 
             sales = sum(sales, na.rm = TRUE)) %>% 
   ungroup() %>% 
-  mutate(price = sales / units)
+  mutate(flag = 0)
 
-# total
-raw.ah <- read.xlsx('02_Inputs/data/胰岛素_ah_CHC_202006.xlsx')
-raw.bj <- read.xlsx('02_Inputs/data/胰岛素_bj_CHC_2020Q2.xlsx')
-raw.js <- read.xlsx('02_Inputs/data/胰岛素_js_CHC_2020Q1Q2.xlsx')
-raw.zj <- read.xlsx('02_Inputs/data/胰岛素_zj_CHC_2020Q1Q2.xlsx')
-raw.fjsd <- read.xlsx('02_Inputs/data/胰岛素_fjsd_CHC_2020Q1Q2(predicted by yidaosu171819_m2_packid_moleinfo).xlsx')
-
-raw.total <- bind_rows(raw.ah, raw.bj, raw.js, raw.zj) %>% 
-  mutate(Year = as.character(Year), 
-         Month = as.character(Month)) %>% 
-  bind_rows(raw.fjsd) %>% 
-  distinct(year = as.character(Year), 
-           quarter = Quarter, 
-           month = as.character(Month), 
-           province = gsub('省|市', '', Province), 
-           city = if_else(City == "市辖区", "北京", gsub("市", "", City)), 
-           district = County, 
-           hospital = Hospital_Name, 
-           atc4 = ATC4_Code, 
-           nfc = NFC123_Code, 
-           molecule = Molecule_Desc, 
-           product = Prd_desc, 
-           packid = stri_pad_left(packcode, 7, 0), 
-           price = Price, 
-           units = if_else(is.na(Volume), Value / Price, Volume), 
-           sales = Value) %>% 
-  left_join(pchc.mapping3, by = c('province', 'city', 'district', 'hospital')) %>% 
-  filter(!is.na(pchc), pchc != '#N/A', units > 0, sales > 0) %>% 
-  bind_rows(raw.gz) %>% 
-  filter(stri_sub(atc4, 1, 4) %in% c('A10C', 'A10D')) %>% 
-  group_by(year, quarter, month, pchc, atc4, nfc, molecule, product, packid) %>% 
-  summarise(province = first(na.omit(province)), 
-            city = first(na.omit(city)), 
-            district = first(na.omit(district)), 
-            units = sum(units, na.rm = TRUE), 
-            sales = sum(sales, na.rm = TRUE)) %>% 
-  ungroup() %>% 
-  mutate(price = sales / units) %>% 
-  bind_rows(raw.servier)
-
-write.xlsx(raw.total, '03_Outputs/01_Sanofi_Lantus_2020Q1Q2_Raw.xlsx')
-
-# chk <- raw.servier %>%
-#   filter(is.na(pchc)) %>%
-#   distinct(province, city, district, hospital)
-# 
-# write.xlsx(chk, '05_Internal_Review/pchc_check.xlsx')
-
-
-
-
-
-
-
-
+write.xlsx(raw.total, '03_Outputs/01_Sanofi_Plavix_CHC_Raw.xlsx')
