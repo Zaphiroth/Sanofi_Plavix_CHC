@@ -6,6 +6,48 @@
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
 
+##---- Check SOP -----
+## CHPA
+chpa.format <- read.xlsx('05_Internal_Review/ims_chpa_to20Q3_format.xlsx')
+
+market.pack <- market.def %>% 
+  distinct(Pack_ID, Market)
+
+plavix.chpa <- chpa.format %>% 
+  pivot_longer(cols = c(ends_with('UNIT'), ends_with('RENMINBI')), 
+               names_to = 'quarter', 
+               values_to = 'value') %>% 
+  separate(quarter, c('quarter', 'measure'), sep = '_') %>% 
+  pivot_wider(id_cols = c(Pack_ID, ATC4_Code, Molecule_Desc, Prd_desc, 
+                          Pck_Desc, Corp_Desc, quarter), 
+              names_from = measure, 
+              values_from = value) %>% 
+  left_join(market.pack, by = 'Pack_ID') %>% 
+  filter(!is.na(Market), 
+         stri_sub(quarter, 1, 4) %in% c('2018', '2019', '2020')) %>% 
+  select(Pack_ID, YQ = quarter, `ATC Code IV` = ATC4_Code, Market, 
+         Mole_Ename = Molecule_Desc, Prod_Ename = Prd_desc, Pack_DESC = Pck_Desc, 
+         Corp_EName = Corp_Desc, `Total Unit` = UNIT, `Value (RMB)` = RENMINBI)
+
+write.xlsx(plavix.chpa, '05_Internal_Review/Plavix_CHPA_2018Q1_2020Q3.xlsx')
+
+## Update
+chpa.info <- plavix.chpa %>% 
+  distinct(Pack_ID, `ATC Code IV`, Mole_Ename, Prod_Ename, Pack_DESC, Corp_EName)
+
+delivery.update <- plavix.chc %>% 
+  distinct(Pack_ID = PACK, YQ = YM, Market, Measurement, Unit) %>% 
+  pivot_wider(names_from = Measurement, 
+              values_from = Unit) %>% 
+  left_join(chpa.info, by = 'Pack_ID') %>% 
+  filter(!is.na(`ATC Code IV`), stri_sub(YQ, 1, 4) %in% c('2018', '2019', '2020'))
+
+write.xlsx(delivery.update, '05_Internal_Review/Plavix_Delivery_Updated.xlsx')
+
+
+
+
+
 ##---- Projection rate ----
 raw.2019 <- read_feather('02_Inputs/review/01_Total_Market_Data.feather')
 proj.2019 <- read_feather('02_Inputs/review/05_Projection_with_Price.feather')
