@@ -82,8 +82,44 @@ market.def <- read.xlsx('02_Inputs/Market_Plavix.xlsx')
 
 
 ##---- Formatting raw data ----
-## Anhui, Beijing, Fujian, Jiangsu, Shandong, Zhejiang
-raw.list <- map(list.files('02_Inputs/data', pattern = '*.xlsx', full.names = TRUE), 
+## AZ data
+raw.list.az <- map(list.files('02_Inputs/data/AZ', pattern = '*.xlsx', full.names = TRUE), 
+                   function(x) {
+                     read.xlsx(x) %>% 
+                       mutate(Year = as.character(Year), 
+                              Month = as.character(Month), 
+                              Prd_desc_ZB = as.character(Prd_desc_ZB))
+                   })
+
+raw.data.az <- bind_rows(raw.list.az) %>% 
+  distinct(year = as.character(Year), 
+           quarter = Quarter, 
+           date = as.character(Month), 
+           province = gsub('省|市', '', Province), 
+           city = if_else(City == "市辖区", "北京", gsub("市", "", City)), 
+           district = County, 
+           hospital = Hospital_Name, 
+           packid = stri_pad_left(packcode, 7, 0), 
+           units = if_else(is.na(Volume), Value / Price, Volume), 
+           sales = Value) %>% 
+  left_join(pchc.mapping3, by = c('province', 'city', 'district', 'hospital')) %>% 
+  filter(!is.na(pchc), !is.na(packid), 
+         year %in% c('2018', '2019', '2020'), !(quarter %in% c('2020Q4'))) %>% 
+  mutate(packid = if_else(stri_sub(packid, 1, 5) == '47775', 
+                          stri_paste('58906', stri_sub(packid, 6, 7)), 
+                          packid), 
+         packid = if_else(stri_sub(packid, 1, 5) == '06470', 
+                          stri_paste('64895', stri_sub(packid, 6, 7)), 
+                          packid)) %>% 
+  left_join(ims.mol, by = 'packid') %>% 
+  filter(Molecule_Desc %in% c('CLOPIDOGREL', 'TICAGRELOR'), 
+         units > 0, sales > 0) %>% 
+  select(year, date, quarter, province, city, district, pchc, atc4 = ATC4_Code, 
+         nfc = NFC123_Code, molecule = Molecule_Desc, product = Prd_desc, 
+         packid, units, sales)
+
+## plavix data
+raw.list <- map(list.files('02_Inputs/data/Plavix', pattern = '*.xlsx', full.names = TRUE), 
                 function(x) {
                   read.xlsx(x) %>% 
                     mutate(Year = as.character(Year), 
@@ -173,7 +209,7 @@ raw.gz <- raw.gz2 %>%
          packid, units, sales)
 
 ## total
-raw.total <- bind_rows(raw.data, raw.gz) %>% 
+raw.total <- bind_rows(raw.data, raw.data.az, raw.gz) %>% 
   filter(packid %in% market.def$Pack_ID) %>% 
   group_by(pchc) %>% 
   mutate(province = first(na.omit(province)), 
